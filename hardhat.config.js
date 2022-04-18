@@ -19,8 +19,11 @@ task("accounts", "Prints the list of accounts", async (taskArgs, hre) => {
  * @type import('hardhat/config').HardhatUserConfig
  */
 module.exports = {
-  defaultNetwork: "alfajores",
+  // defaultNetwork: "alfajores",
   networks: {
+    hardhat: {
+      allowUnlimitedContractSize: true
+    },
     testnet: {
       url: "https://data-seed-prebsc-1-s1.binance.org:8545/",
       accounts: [`0x${process.env.PRIVATE_KEY}`],
@@ -54,7 +57,7 @@ module.exports = {
       chainId: 42220
     }
   },
-  solidity: "0.8.0",
+  solidity: "0.8.3",
   etherscan: {
     // Your API key for Etherscan
     // Obtain one at https://etherscan.io/
