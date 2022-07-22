@@ -6,7 +6,9 @@ pragma experimental ABIEncoderV2;
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
-contract CertificationMarketAPI {
+import "../CyberBoxCertInterface.sol";
+
+contract CertificationMarketAPI is CyberBoxCertInterface {
     using SafeMath for uint256;
 
     uint256 private _baseFeeTokenSeller;
@@ -36,6 +38,11 @@ contract CertificationMarketAPI {
         maketPlaceFeeAddress = _owner;
 
         _erc721 = IERC721(_certNft);
+
+        emit CertificationDevFeeChanged(
+            maketPlaceFeeAddress,
+            _baseFeeTokenDev
+        );
     }
     
     function calculateSellerFee(uint256 value) public returns(uint256){
@@ -52,7 +59,6 @@ contract CertificationMarketAPI {
     }
 
     function setNFTFees(
-        address _nftAddress,
         uint256 _feeCreater,
         uint256 _feeProducer
         )
@@ -69,10 +75,11 @@ contract CertificationMarketAPI {
         _baseFeeTokenProducer = _feeProducer;
         _baseFeeTokenSeller = _baseFeeTokenBase - _baseFeeTokenCreater - _baseFeeTokenDev - _baseFeeTokenProducer;
         _baseFeeFraction = _baseFeeTokenCreater + _baseFeeTokenDev + _baseFeeTokenProducer;
+
+        emit CertificationFeeChanged(_feeCreater, _feeProducer);
     }
 
     function setMaketPlaceAddressAndDevFee(
-        address _nftAddress,
         address _maketPlaceFeeAddress, 
         uint256 _maketPlaceFeePercentage)
         external
@@ -89,10 +96,11 @@ contract CertificationMarketAPI {
         _baseFeeTokenDev = _maketPlaceFeePercentage;
         _baseFeeTokenSeller = _baseFeeTokenBase - _baseFeeTokenDev - _baseFeeTokenCreater - _baseFeeTokenProducer; 
         _baseFeeFraction = _baseFeeTokenDev + _baseFeeTokenCreater + _baseFeeTokenProducer;
+    
+        emit CertificationDevFeeChanged(_maketPlaceFeeAddress, _maketPlaceFeePercentage);
     }
 
     function setTokenCreaterAddress(
-        address _nftAddress,
         address _tokenCreaterAddress)
         external
     {
@@ -101,10 +109,11 @@ contract CertificationMarketAPI {
             1000 == _baseFeeTokenBase, "This token is not registed"
         );
         nftCreaterAddress = _tokenCreaterAddress;
+
+        emit CertificationTokenCreaterChanged(_tokenCreaterAddress);
     }
 
     function setTokenProducerAddress(
-        address _nftAddress,
         address _tokenProducerAddress)
         external
     {
@@ -113,10 +122,11 @@ contract CertificationMarketAPI {
             1000 == _baseFeeTokenBase, "This token is not registed"
         );
         nftProducerAddress = _tokenProducerAddress;
+
+        emit CertificationTokenProducerChanged(_tokenProducerAddress);
     }
 
     function changeTokenCreaterAddress(
-        address _nftAddress,
         address _tokenCreaterAddress) external {
         nftCreaterAddress = _tokenCreaterAddress;
     }

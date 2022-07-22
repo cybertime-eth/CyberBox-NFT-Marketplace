@@ -191,6 +191,9 @@ contract MarketPlaceV2 is InterfaceV2, MarketPlaceFeeAPI, MarketPlaceNFTAPI, Own
         );
     }
     function buyTokenComplete(address sender, uint256 tokenId) external onlyDev {
+
+
+        
         Listing memory listing = getTokenListing(tokenId); // Get valid listing
          nftTransferFrom(listing.seller, sender, tokenId);
          // Remove token listing

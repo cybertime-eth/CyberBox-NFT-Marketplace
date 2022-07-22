@@ -5,19 +5,20 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ERC777} from "@openzeppelin/contracts/token/ERC777/ERC777.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 
 import "hardhat/console.sol";
 
 import "./DateTimeManager.sol";
-import "./CyberTimeCertNFT.sol";
-import "./CyberTimeCertInterface.sol";
-import "./CyberTimeCertResource.sol";
+import "./CyberBoxCertNFT.sol";
+import "./CyberBoxCertInterface.sol";
+import "./CyberBoxCertResource.sol";
 import "./Uniswap/uniswpv2.sol";
 
 import "./MarketPlace/CertificationMarketPlace.sol";
 
-contract CyberTimeCertMinter is DateTimeManager, CyberTimeCertInterface, CyberTimeCertResource, CertificationMarketPlace {
+contract CyberBoxCertMinter is DateTimeManager, CyberBoxCertInterface, CyberBoxCertResource, CertificationMarketPlace {
     using Address for address;
 
     struct NFTMAP  {
@@ -28,19 +29,23 @@ contract CyberTimeCertMinter is DateTimeManager, CyberTimeCertInterface, CyberTi
 
     address public dev;
     address public owner;
-    address public carbonAdd;
-    uint256 public carvonFee;
+    address public c02Owner;
+    uint256 public offsetFee;
+    uint256 public carvonFeeOnOffset;
 
     address public linkedNFTAddress;
 
     address private constant UNISWAP_V2_ROUTER = 0xE3D8bd6Aed4F159bc8000a9cD47CffDb95F96121;
     address private constant WETH = 0x471EcE3750Da237f93B8E339c536989b8978a438;
-    address public CMCO2 = 0x32A9FE697a32135BFd313a6Ac28792DaE4D9979d;
+    address public CARBOM = 0x32A9FE697a32135BFd313a6Ac28792DaE4D9979d;
+
+    uint256 public limitMonthNFTPrice;
+    uint256 public limitBonusNFTPrice;
     
     //////// owner address => year_month_key => token id
-    mapping (address => mapping(uint256 => uint256)) private _ownedMonthData;
-    mapping (address => mapping(uint256 => uint256)) private _ownedYearData;
-    mapping (address => mapping(uint256 => uint256)) private _ownedBonusData;
+    mapping (address => mapping(uint256 => uint256)) public ownedMonthData;
+    mapping (address => mapping(uint256 => uint256)) public ownedYearData;
+    mapping (address => mapping(uint256 => uint256)) public ownedBonusData;
 
     mapping (uint256 => NFTMAP) private _nftDateMap;
     
@@ -59,98 +64,142 @@ contract CyberTimeCertMinter is DateTimeManager, CyberTimeCertInterface, CyberTi
         initializeWithERC721(_nft, _owner);
         dev = _dev;
         owner = _owner;
-        carbonAdd = _carvon;
-        carvonFee = 25;
+        c02Owner = _carvon;
+        offsetFee = 400;
+        carvonFeeOnOffset = 1000;
+
+        limitMonthNFTPrice = 15e18;
+        limitBonusNFTPrice = 15e18;
+
+
+        uint256 producerFee = (offsetFee * carvonFeeOnOffset) / 1000;
+        uint256 devFee = (offsetFee * (1000 - carvonFeeOnOffset)) / 1000;
+        uint256 createrFee = 1000 - producerFee - devFee;
+        emit CertificationTokenCreaterChanged(owner);
+        emit CertificationTokenProducerChanged(c02Owner);
+        emit CertificationFeeChanged(createrFee, producerFee);
+        emit CertificationDevFeeChanged(dev, devFee);
     }
 
-    function uniwapMCO(address _to, uint256 _amountIn) public returns (uint256[] memory amounts){
+    function uniwapCarbon(address _to, uint256 _amountIn) public returns (uint256[] memory amounts){
+        
         IERC20(WETH).approve(UNISWAP_V2_ROUTER, _amountIn);
         address[] memory path = new address[](2);
         path[0] = WETH;
-        path[1] = CMCO2;
+        path[1] = CARBOM;
         return IUniswapV2Router(UNISWAP_V2_ROUTER).swapExactTokensForTokens(_amountIn, 0, path, _to, block.timestamp);
+    }
+
+    function offset(uint256 amount) private returns(uint256 sf, uint256 df, uint256 co2) {
+        uint256 totalFee = (amount * offsetFee) / 1000;
+        uint256 c02Fee = (totalFee * carvonFeeOnOffset) / 1000;
+        uint256 devFee = totalFee - c02Fee;
+        uint256 sellerFee = amount - totalFee;
+
+        payable(owner).transfer(sellerFee);
+        payable(dev).transfer(devFee);
+
+        /* for test code deactive it
+        uint256[] memory amounts = uniwapCarbon(c02Owner, c02Fee);
+        uint256 co2Value = amounts[amounts.length - 1];
+        */
+        uint256 co2Value = 0;
+
+        return (sellerFee, devFee, co2Value);
     }
 
     function mintMonthNFT() external payable {
         (uint256 year, uint256 month) = getDateTimeSymbol();
         uint256 current_nft_id = getCurrentMonthNFTID(msg.sender);
         require(current_nft_id < 1, "This user already mint nft for this month.");
-        require(msg.value > 0, "This user must pay for mint nft.");
+        require(msg.value >= limitMonthNFTPrice, "This user must pay for mint nft.");
 
         uint256 totalValue = msg.value;
-        uint256 c02Fee = (totalValue * carvonFee) /1000;
-        uint256 sellerFee = totalValue - c02Fee;
-
-        payable(owner).transfer(sellerFee);
-        uint256[] memory amounts = uniwapMCO(owner, c02Fee);
-        uint256 co2Value = amounts[amounts.length - 1];
+        (uint256 sellerFee, uint256 devFee, uint256 co2Value) = offset(totalValue);
         
         string memory token_uri = getMonthTokenURI(year, month);
-        uint256 nft_id = CyberTimeCertNFT(linkedNFTAddress).mintNFT(msg.sender, token_uri);
-        _ownedMonthData[msg.sender][year*100 + month] = nft_id;
+        uint256 nft_id = CyberBoxCertNFT(linkedNFTAddress).mintNFT(msg.sender, token_uri);
+        ownedMonthData[msg.sender][year*100 + month] = nft_id;
         _nftDateMap[nft_id] = NFTMAP(TOKEN_TYPE_MONTH, year, month);
-        emit CertificationNFTMinted(msg.sender, TOKEN_TYPE_MONTH, nft_id, year, month, totalValue, co2Value);
+        emit CertificationNFTMinted(msg.sender, TOKEN_TYPE_MONTH, nft_id, year, month, totalValue, devFee, co2Value);
+    }
+
+
+    function adminMintMonthlyNFT(address user, uint256 month) public onlyDev {
+        uint256 year = 2022;
+        require(month < 7, "You can't mint over June.");
+        uint256 current_nft_id = getMonthNFTID(user, year, month);
+        if(current_nft_id < 1) {
+            string memory token_uri = getMonthTokenURI(year, month);
+            uint256 nft_id = CyberBoxCertNFT(linkedNFTAddress).mintNFT(user, token_uri);
+            ownedMonthData[user][year*100 + month] = nft_id;
+            _nftDateMap[nft_id] = NFTMAP(TOKEN_TYPE_MONTH, year, month);
+            emit CertificationNFTMinted(user, TOKEN_TYPE_MONTH, nft_id, year, month, 0, 0, 0);
+        }
+    }
+    function adminMintAllNFTs(address user)  public onlyDev {
+        uint256 year = 2022;
+        for(uint256 month = 1; month<=6; month++){
+            uint256 current_nft_id = getMonthNFTID(user, year, month);
+            if(current_nft_id < 1) {
+                string memory token_uri = getMonthTokenURI(year, month);
+                uint256 nft_id = CyberBoxCertNFT(linkedNFTAddress).mintNFT(user, token_uri);
+                ownedMonthData[user][year*100 + month] = nft_id;
+                _nftDateMap[nft_id] = NFTMAP(TOKEN_TYPE_MONTH, year, month);
+                emit CertificationNFTMinted(user, TOKEN_TYPE_MONTH, nft_id, year, month, 0, 0, 0);
+            }
+        }
     }
 
     function mintMonthNFTFor(address receipt, uint256 year, uint256 month) private {
         uint256 current_nft_id = getMonthNFTID(receipt, year, month);
         if(current_nft_id < 1) {
             string memory token_uri = getMonthTokenURI(year, month);
-            uint256 nft_id = CyberTimeCertNFT(linkedNFTAddress).mintNFT(msg.sender, token_uri);
-            _ownedMonthData[msg.sender][year*100 + month] = nft_id;
+            uint256 nft_id = CyberBoxCertNFT(linkedNFTAddress).mintNFT(msg.sender, token_uri);
+            ownedMonthData[msg.sender][year*100 + month] = nft_id;
             _nftDateMap[nft_id] = NFTMAP(TOKEN_TYPE_MONTH, year, month);
-            emit CertificationNFTMinted(msg.sender, TOKEN_TYPE_MONTH, nft_id, year, month, 0, 0);
+            emit CertificationNFTMinted(msg.sender, TOKEN_TYPE_MONTH, nft_id, year, month, 0, 0, 0);
         }
     }
 
-    function mintYearNFT()  external payable  {
+    function mintYearNFT()  external onlyDev payable  {
         (uint256 year, uint256 month) = getDateTimeSymbol();
         uint256 current_nft_id = getCurrentYearNFTID(msg.sender);
         require(current_nft_id < 1, "This user already mint nft for this month.");
-        require(msg.value > 0, "This user must pay for mint nft.");
+        require(msg.value >= limitMonthNFTPrice, "This user must pay for mint nft.");
         
         uint256 totalValue = msg.value;
-        uint256 c02Fee = (totalValue * carvonFee) /1000;
-        uint256 sellerFee = totalValue - c02Fee;
-
-        payable(owner).transfer(sellerFee);
-        uint256[] memory amounts = uniwapMCO(owner, c02Fee);
         
-        uint256 co2Value = amounts[amounts.length - 1];
+        (uint256 sellerFee, uint256 devFee, uint256 co2Value) = offset(totalValue);
 
         string memory token_uri = getYearTokenURI(year);
-        uint256 nft_id = CyberTimeCertNFT(linkedNFTAddress).mintNFT(msg.sender, token_uri);
-        _ownedYearData[msg.sender][year] = nft_id;
+        uint256 nft_id = CyberBoxCertNFT(linkedNFTAddress).mintNFT(msg.sender, token_uri);
+        ownedYearData[msg.sender][year] = nft_id;
         _nftDateMap[nft_id] = NFTMAP(TOKEN_TYPE_YEAR, year, 0);
-        emit CertificationNFTMinted(msg.sender, TOKEN_TYPE_YEAR, nft_id, year, 0, totalValue, co2Value);
+        emit CertificationNFTMinted(msg.sender, TOKEN_TYPE_YEAR, nft_id, year, 0, totalValue, devFee, co2Value);
     }
 
-    function mintBonusNFT() external payable {
+    function mintBonusNFT() external onlyDev payable {
         (uint256 year, uint256 month) = getDateTimeSymbol();
         uint256 current_nft_id = getCurrentBonusNFTID(msg.sender);
         require(current_nft_id < 1, "This user already mint nft for this month.");
-        require(msg.value > 0, "This user must pay for mint nft.");
+        require(msg.value >= limitBonusNFTPrice, "This user must pay for mint nft.");
 
         uint256 totalValue = msg.value;
-        uint256 c02Fee = (totalValue * carvonFee) /1000;
-        uint256 sellerFee = totalValue - c02Fee;
-
-        payable(owner).transfer(sellerFee);
-        uint256[] memory amounts = uniwapMCO(owner, c02Fee);
-        uint256 co2Value = amounts[amounts.length - 1];
+        (uint256 sellerFee, uint256 devFee, uint256 co2Value) = offset(totalValue);
 
         string memory token_uri = getBonusTokenURI(year);
-        uint256 nft_id = CyberTimeCertNFT(linkedNFTAddress).mintNFT(msg.sender, token_uri);
-        _ownedBonusData[msg.sender][year] = nft_id;
+        uint256 nft_id = CyberBoxCertNFT(linkedNFTAddress).mintNFT(msg.sender, token_uri);
+        ownedBonusData[msg.sender][year] = nft_id;
         _nftDateMap[nft_id] = NFTMAP(TOKEN_TYPE_BONUS, year, 0);
-        emit CertificationNFTMinted(msg.sender, TOKEN_TYPE_BONUS, nft_id, year, 0, totalValue, co2Value);
+        emit CertificationNFTMinted(msg.sender, TOKEN_TYPE_BONUS, nft_id, year, 0, totalValue, devFee, co2Value);
     }
 
     function exchangeBonusNFTToMonth(uint256 year) public {
         uint256 current_nft_id = getBonusNFTID(msg.sender, year);
         require(current_nft_id > 0, "This user don't have bonus NFT.");
-        CyberTimeCertNFT(linkedNFTAddress).burn(msg.sender, current_nft_id);
-        _ownedBonusData[msg.sender][year] = 0;
+        CyberBoxCertNFT(linkedNFTAddress).burn(msg.sender, current_nft_id);
+        ownedBonusData[msg.sender][year] = 0;
         emit CertificationNFTBurned(msg.sender, TOKEN_TYPE_BONUS, current_nft_id, year, 0);
         for(uint256 month = 1; month<=12; month++){
             mintMonthNFTFor(msg.sender, year, month);
@@ -163,14 +212,14 @@ contract CyberTimeCertMinter is DateTimeManager, CyberTimeCertInterface, CyberTi
         for(uint256 month = 1; month<=12; month++){
             uint256 current_nft_id = getMonthNFTID(msg.sender, year, month);
             require(current_nft_id > 0, "This user don't have all month NFT.");
-            CyberTimeCertNFT(linkedNFTAddress).burn(msg.sender, current_nft_id);
-            _ownedMonthData[msg.sender][year*100 + month] = 0;
+            CyberBoxCertNFT(linkedNFTAddress).burn(msg.sender, current_nft_id);
+            ownedMonthData[msg.sender][year*100 + month] = 0;
             emit CertificationNFTBurned(msg.sender, TOKEN_TYPE_MONTH, current_nft_id, year, 0);
         }
         string memory token_uri = getBonusTokenURI(year);
-        uint256 nft_id = CyberTimeCertNFT(linkedNFTAddress).mintNFT(msg.sender, token_uri);
-        _ownedBonusData[msg.sender][year] = nft_id;
-        emit CertificationNFTMinted(msg.sender, TOKEN_TYPE_BONUS, nft_id, year, 0, 0, 0);
+        uint256 nft_id = CyberBoxCertNFT(linkedNFTAddress).mintNFT(msg.sender, token_uri);
+        ownedBonusData[msg.sender][year] = nft_id;
+        emit CertificationNFTMinted(msg.sender, TOKEN_TYPE_BONUS, nft_id, year, 0, 0, 0, 0);
     }
 
     function transferNFTOwnedData(address from, address to, uint256 tokenId) private {
@@ -179,65 +228,112 @@ contract CyberTimeCertMinter is DateTimeManager, CyberTimeCertInterface, CyberTi
         uint256 year = mapData.year;
         uint256 month = mapData.month;
         if (tokenType == TOKEN_TYPE_MONTH){
-            _ownedMonthData[from][year*100 + month] = 0;
-            _ownedMonthData[to][year*100 + month] = tokenId;
+            ownedMonthData[from][year*100 + month] = 0;
+            ownedMonthData[to][year*100 + month] = tokenId;
         }
         if (tokenType == TOKEN_TYPE_YEAR) {
-            _ownedYearData[from][year] = 0;
-            _ownedYearData[to][year] = tokenId;
+            ownedYearData[from][year] = 0;
+            ownedYearData[to][year] = tokenId;
         }
         if (tokenType == TOKEN_TYPE_BONUS) {
-            _ownedBonusData[from][year] = 0;
-            _ownedBonusData[to][year] = tokenId;
+            ownedBonusData[from][year] = 0;
+            ownedBonusData[to][year] = tokenId;
         }
     }
 
 
     function getMonthNFTID(address owner, uint256 year, uint256 month) public returns (uint256){
-        console.log("getMonthNFTID", year, month, _ownedMonthData[owner][year * 100 + month]);
-        return _ownedMonthData[owner][year * 100 + month];
+        return ownedMonthData[owner][year * 100 + month];
     }
 
     function getYearNFTID(address owner, uint256 year) public returns (uint256) {
-        console.log("getYearNFTID", year, _ownedBonusData[owner][year]);
-        return _ownedYearData[owner][year];
+        return ownedYearData[owner][year];
     }
 
     function getBonusNFTID(address owner, uint256 year) public returns (uint256) {
-        console.log("getBonusNFTID", year, _ownedBonusData[owner][year]);
-        return _ownedBonusData[owner][year];
+        return ownedBonusData[owner][year];
     }
 
     
     function getCurrentMonthNFTID(address owner) public returns (uint256) {
         (uint256 year, uint256 month) = getDateTimeSymbol();
-        return _ownedMonthData[owner][year * 100 + month];
+        return ownedMonthData[owner][year * 100 + month];
     }
     function getCurrentYearNFTID(address owner) public returns (uint256) {
         (uint256 year, uint256 month) = getDateTimeSymbol();
-        return _ownedYearData[owner][year];
+        return ownedYearData[owner][year];
     }
     function getCurrentBonusNFTID(address owner) public returns (uint256) {
         (uint256 year, uint256 month) = getDateTimeSymbol();
-        return _ownedBonusData[owner][year];
+        return ownedBonusData[owner][year];
     }
     
     
-    function changeDev(address _newDev) public onlyDev {dev  = _newDev;}
-    function changeOwner(address _newOnwer) public onlyDev {owner  = _newOnwer;}
+    function changeDev(address _newDev) public onlyDev {
+        dev  = _newDev;
+        uint256 producerFee = (offsetFee * carvonFeeOnOffset) / 1000;
+        uint256 devFee = (offsetFee * (1000 - carvonFeeOnOffset)) / 1000;
+        uint256 createrFee = 1000 - producerFee - devFee;
+        emit CertificationTokenCreaterChanged(owner);
+        emit CertificationTokenProducerChanged(c02Owner);
+        emit CertificationFeeChanged(createrFee, producerFee);
+        emit CertificationDevFeeChanged(dev, devFee);
+    }
+    function changeOwner(address _newOnwer) public onlyDev {
+        owner  = _newOnwer;
+        uint256 producerFee = (offsetFee * carvonFeeOnOffset) / 1000;
+        uint256 devFee = (offsetFee * (1000 - carvonFeeOnOffset)) / 1000;
+        uint256 createrFee = 1000 - producerFee - devFee;
+        emit CertificationTokenCreaterChanged(owner);
+        emit CertificationTokenProducerChanged(c02Owner);
+        emit CertificationFeeChanged(createrFee, producerFee);
+        emit CertificationDevFeeChanged(dev, devFee);
+    }
+    function changeCo2Owner(address _newOnwer) public onlyDev {
+        c02Owner  = _newOnwer;
+        uint256 producerFee = (offsetFee * carvonFeeOnOffset) / 1000;
+        uint256 devFee = (offsetFee * (1000 - carvonFeeOnOffset)) / 1000;
+        uint256 createrFee = 1000 - producerFee - devFee;
+        emit CertificationTokenCreaterChanged(owner);
+        emit CertificationTokenProducerChanged(c02Owner);
+        emit CertificationFeeChanged(createrFee, producerFee);
+        emit CertificationDevFeeChanged(dev, devFee);
+    }
 
-    function changeCarvonTokenAddress(address _carvonToken) public onlyDev {CMCO2 = _carvonToken;}
-    function changeCarvonFeeAddress(address _carvon) public onlyDev {carbonAdd = _carvon;}
-    function changeCarvonFee(uint256 _carvonFee) public onlyDev {carvonFee = _carvonFee;}
+    function changeCarvonTokenAddress(address _carvonToken) public onlyDev {CARBOM = _carvonToken;}
+    function changeOffsetFee(uint256 _offsetFee) public onlyDev {
+        offsetFee = _offsetFee;
+        uint256 producerFee = (offsetFee * carvonFeeOnOffset) / 1000;
+        uint256 devFee = (offsetFee * (1000 - carvonFeeOnOffset)) / 1000;
+        uint256 createrFee = 1000 - producerFee - devFee;
+        emit CertificationTokenCreaterChanged(owner);
+        emit CertificationTokenProducerChanged(c02Owner);
+        emit CertificationFeeChanged(createrFee, producerFee);
+        emit CertificationDevFeeChanged(dev, devFee);    
+    }
+    function changeCarbonPercent(uint256 _carbonPercent) public onlyDev {
+        carvonFeeOnOffset = _carbonPercent;
+        uint256 producerFee = (offsetFee * carvonFeeOnOffset) / 1000;
+        uint256 devFee = (offsetFee * (1000 - carvonFeeOnOffset)) / 1000;
+        uint256 createrFee = 1000 - producerFee - devFee;
+        emit CertificationTokenCreaterChanged(owner);
+        emit CertificationTokenProducerChanged(c02Owner);
+        emit CertificationFeeChanged(createrFee, producerFee);
+        emit CertificationDevFeeChanged(dev, devFee);
+    }
 
-    modifier onlyDev() { require(msg.sender == dev, "CyberTimeCertNFT: wrong developer");_;}
+    function changeMonthNFTLimitPrice(uint256 _price) public onlyDev {limitMonthNFTPrice = _price;}
+    function changeBonusNFTLimitPrice(uint256 _price) public onlyDev {limitBonusNFTPrice = _price;}
+
+    modifier onlyDev() { require(msg.sender == dev, "CyberBoxCertNFT: wrong developer");_;}
 
     /**
      * @dev List token for sale
      * @param tokenId erc721 token Id
      * @param value min price to sell the token
      */
-    function listToken(
+    function ListToken(
+    // function listToken(
         uint256 tokenId,
         uint256 value
     ) external  {

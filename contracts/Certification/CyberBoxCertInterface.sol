@@ -3,7 +3,7 @@
 pragma solidity 0.8.3;
 pragma experimental ABIEncoderV2;
 
-interface CyberTimeCertInterface {
+interface CyberBoxCertInterface {
     event CertificationNFTMinted(
         address owner,
         uint256 tokenType,
@@ -11,6 +11,7 @@ interface CyberTimeCertInterface {
         uint256 year,
         uint256 month,
         uint256 price,
+        uint256 devFee,
         uint256 c02
     );
 
@@ -72,5 +73,20 @@ interface CyberTimeCertInterface {
         address nftAddress,
         uint256 indexed tokenId,
         uint256 price
+    );
+
+    event CertificationFeeChanged(
+        uint256 createrFee,
+        uint256 producerFee
+    );
+    event CertificationDevFeeChanged(
+        address marketPlaceFeeAddress,
+        uint256 marketFee
+    );
+    event CertificationTokenCreaterChanged(
+        address tokenCreaterAddress
+    );
+    event CertificationTokenProducerChanged(
+        address tokenCreaterAddress
     );
 }

@@ -5,7 +5,7 @@ pragma experimental ABIEncoderV2;
 
 import {StringsUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/StringsUpgradeable.sol";
 
-contract CyberTimeCertResource {
+contract CyberBoxCertResource {
 
     string public baseURI;
 

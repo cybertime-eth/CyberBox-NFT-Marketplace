@@ -9,7 +9,7 @@ import {CountersUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Cou
 
 import "hardhat/console.sol";
 
-contract CyberTimeCertNFT is ERC721URIStorage  {
+contract CyberBoxCertNFT is ERC721URIStorage  {
 
     address public dev;
     address public owner;
@@ -21,7 +21,7 @@ contract CyberTimeCertNFT is ERC721URIStorage  {
     constructor(
         address _owner,
         address _dev
-    ) public ERC721("CyberTimeCertNFT", "CTCN") {
+    ) public ERC721("CyberBoxCertNFT", "CBCN") {
         owner = _owner;
         dev = _dev;
     }
@@ -44,7 +44,7 @@ contract CyberTimeCertNFT is ERC721URIStorage  {
     }
 
     modifier onlyDev() {
-        require((msg.sender == dev || msg.sender == owner), "CyberTimeCertNFT: wrong developer");
+        require((msg.sender == dev || msg.sender == owner), "CyberBoxCertNFT: wrong developer");
         _;
     }
 
